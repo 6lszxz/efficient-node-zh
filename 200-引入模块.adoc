@@ -1,0 +1,206 @@
+= Requiring Modules
+ifdef::env-github[]
+:tip-caption: :bulb:
+:note-caption: :bookmark:
+:important-caption: :boom:
+:caution-caption: :fire:
+:warning-caption: :warning:
+endif::[]
+
+Node使用两个核心模块来处理模块依赖：
+
+- `require`模块，在全局均可用——无需调用`require('require')`。
+- `module`模块，也在全局可用——无需调用`require('module')`。
+
+你可以认为`require`模块是一种*命令*，而`module`模块是所有引入模块的组织者。
+
+在Node中引入一个模块并不是多么复杂的概念。
+
+[source, js]
+[subs="+quotes,+macros"]
+----
+const config = **require**('/path/to/file');
+----
+
+`require`模块导出的一个主要对象便是一个函数（就像上面的例子中使用的那样）。当Node调用仅传入本地路径参数的`require`函数时，Node会进行下面的一系列步骤：
+
+- *解析* 找到文件的绝对路径。
+
+- *加载* 决定文件内容的类型。
+
+- *打包* 提供文件的私有作用域。这就是为什么我们引入的模块和其中的对象都是局部变量。
+
+- *评估* 这便是VM最后对已加载的代码做的事情。
+
+- *缓存* 如果我们再次引入相同的文件，下次就不会执行之前的步骤了。
+
+在这一节中，笔者会使用不同的例子来尝试解释这些步骤，并且会告诉各位这些是如何影响编写Node模块的方式的。
+
+首先在终端中创建一个目录来容纳本书所有的样例：
+
+[source]
+[subs="+quotes,+macros"]
+----
+mkdir ~/learn-node && cd ~/learn-node
+----
+
+[NOTE]
+本节接下来所有的命令行都是在`~/learn-node`目录下运行的。
+
+== 解析一个本地路径
+
+笔者接下来介绍一下`module`对象，你可以在交互式解释器（REPL）中输入这个简单的命令：
+
+[source]
+[subs="+quotes,+macros"]
+----
+_~/learn-node $_ node
+> module
+Module {
+  id: '<repl>',
+  exports: {},
+  parent: undefined,
+  filename: null,
+  loaded: false,
+  children: [],
+  paths: [ ... ] }
+----
+
+每一个模块对象都有一个`id`属性来确认身份。id通常是文件的完整路径，但是在交互式解释器中就是一个简单的`<repl>`。
+
+在Node文件系统中，所有的模块都是一对一连接。我们通过把文件内容加载进内存来引入一个模块。
+
+然而，由于Node允许使用多种方式引入文件（例如使用相对路径或者预配置路径），所以在我们把文件内容读入内存之前，需要找到文件的绝对路径。
+
+当你不指定路径引入一个`'find-me'`模块时：
+
+[source, js]
+[subs="+quotes,+macros"]
+----
+require("find-me");
+----
+
+Node会根据`module.paths`中的顺序依次寻找`find-me.js`：
+
+[source]
+[subs="+quotes,+macros"]
+----
+_~/learn-node $_ node
+> module.paths
+[ '/Users/samer/learn-node/repl/node_modules',
+  '/Users/samer/learn-node/node_modules',
+  '/Users/samer/node_modules',
+  '/Users/node_modules',
+  '/node_modules',
+  '/Users/samer/.node_modules',
+  '/Users/samer/.node_libraries' ]
+----
+
+这些路径列表基本上就是`node_modules`目录下从当前目录到根目录的每一个目录。这也包括一些系统不推荐的遗留目录。
+
+如果Node在上述的路径中都找不到`find-me.js`，那么它会抛出一个“*connot find module error”。
+
+[source]
+[subs="+quotes,+macros"]
+----
+_~/learn-node $_ node
+> require ('find-me')
+Error: Cannot find module 'find-me'
+    at Function.Module._resolveFilename (module.js:470:15)
+    at Function.Module._load (module.js:418:25)
+    at Module.require (module.js:498:17)
+    at require (internal/module.js:20:19)
+    at repl:1:1
+    at ContextifyScript.Script.runInThisContext (vm.js:23:33)
+    at REPLServer.defaultEval (repl.js:336:29)
+    at bound (domain.js:280:14)
+    at REPLServer.runBound [as eval] (domain.js:293:12)
+    at REPLServer.onLine (repl.js:533:10)
+----
+
+如果你现在创建一个本地的`node_modules`目录，并且把`find-me.js`放入，那么`require('find-me')`语句便会找到它。
+
+[source]
+[subs="+quotes,+macros"]
+----
+_~/learn-node $_ mkdir node_modules
+
+_~/learn-node $_ echo "console.log('*I am not lost*');" > node_modules/find-me.js
+
+_~/learn-node $_ node
+> require ('find-me');
+*I am not lost*
+{}
+>
+----
+
+如果另一个`find-me.js`文件在上述的其他路径中已存在，Node将不会使用它。举个例子，如果我们在`~`文件夹中有了一个`node_modules`文件夹，那里的文件和之前的不同：
+
+[source]
+[subs="+quotes,+macros"]
+----
+$ mkdir ~/node_modules
+$ echo "console.log('*I am the root of all problems*');" > ~/node_modules/find-me.js
+----
+
+当我们在有`node_modules/find-me.js`文件的`learn-node`目录下运行`require('find-me')`，那么在`~`文件夹下的`find-me.js`根本不会被加载：
+
+[source]
+[subs="+quotes,+macros"]
+----
+_~/learn-node $_ node
+> require ('find-me')
+*I am not lost*
+{}
+>
+----
+
+但是如果我们删除`~/learn-node`下的`node_modules`文件夹，然后试着再次引入`find-me`文件，那么使用的文件将是`node_modules`下的文件：
+
+[source]
+[subs="+quotes,+macros"]
+----
+_~/learn-node $_ rm -r node_modules/
+
+_~/learn-node $_ node
+> require('find-me')
+*I am the root of all problems*
+{}
+>
+----
+
+== 引入一个文件夹
+
+*模块没必要是多个文件*，我们也可以在`node_modules`文件夹下创建一个`find-me`文件夹，然后在其中放入一个`index.js`文件，同样的`require('find-me')`语句便会使用那个文件夹下的`index.js`文件：
+
+[source]
+[subs="+quotes,+macros"]
+----
+_~/learn-node $_ mkdir -p node_modules/find-me
+
+_~/learn-node $_ echo "console.log('*Found again.*');" > node_modules/find-me/index.js
+
+_~/learn-node $_ node
+> require ('find-me');
+*Found again.*
+{}
+>
+----
+
+注意在我们有了本地文件后`require`语句是如何忽略home文件夹下的`node_modules`文件夹的。
+
+当我们引入一个文件夹时，默认引入的是`index.js`，但是我们通过更改`package.json`文件中的`main`属性，从而可以控制文件的起点。举个例子，为了使`require('find-me')`语句指向find-me文件夹下的另一个文件，我们只需要在那里添加一个`package.json`文件，然后指定文件夹解析的时候使用的文件：
+
+[source]
+[subs="+quotes,+macros"]
+----
+_~/learn-node $_ echo "console.log('*I rule*');" > node_modules/find-me/*start.js*
+
+_~/learn-node $_ echo '{ "name": "find-me-folder"*, "main": "start.js"* }' > node_modules/find-me/package.json
+
+_~/learn-node $_ node
+> require ('find-me');
+*I rule*
+{}
+>
+----
